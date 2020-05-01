@@ -4,7 +4,7 @@ import "fmt"
 import "log"
 import "net/rpc"
 import "hash/fnv"
-
+import "os"
 
 //
 // Map functions return a slice of KeyValue.
@@ -24,7 +24,6 @@ func ihash(key string) int {
 	return int(h.Sum32() & 0x7fffffff)
 }
 
-
 //
 // main/mrworker.go calls this function.
 //
@@ -32,9 +31,17 @@ func Worker(mapf func(string, string) []KeyValue,
 	reducef func(string, []string) string) {
 
 	// Your worker implementation here.
-
+	arg := Args{}
+	arg.Pid = os.Getpid()
+	reply := Reply{}
+	call("Master.HandlerWorker", &arg, &reply)
+	kva := mapf(reply.Filename, reply.Content)
+	for _, kv := range kva {
+		fmt.Printf("key: %s, value: %s\n", kv.Key, kv.Value)
+	}
+	return
 	// uncomment to send the Example RPC to the master.
-	// CallExample()
+	//CallExample()
 
 }
 
