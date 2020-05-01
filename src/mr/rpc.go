@@ -13,14 +13,42 @@ import "strconv"
 // example to show how to declare the arguments
 // and reply for an RPC.
 //
-type mapResultArgs struct {
+//type mapResultArgs struct {
+//}
+//
+//type mapResultReply struct {
+//}
+
+type TaskState int
+
+const (
+	MapState    TaskState = 0
+	ReduceState TaskState = 1
+	StopState   TaskState = 2
+	WaitState   TaskState = 3
+)
+
+type WorkerTask struct {
+	MapID          int
+	ReduceID       int
+	ReduceNum      int
+	State          TaskState
+	FileName       string
+	MapFunction    func(string, string) []KeyValue
+	ReduceFunction func(string, []string) string
 }
 
-type mapResultReply struct {
+type WorkerReportArgs struct {
+	MapID     int
+	ReduceID  int
+	State     TaskState
+	IsSuccess bool
 }
 
-type Args struct {
-	Pid int
+type WorkerReportReply struct {
+}
+
+type CreateWorkerArgs struct {
 }
 
 type Reply struct {
@@ -28,13 +56,13 @@ type Reply struct {
 	Content  string
 }
 
-type ExampleArgs struct {
-	X int
-}
-
-type ExampleReply struct {
-	Y int
-}
+//type ExampleArgs struct {
+//	X int
+//}
+//
+//type ExampleReply struct {
+//	Y int
+//}
 
 // Add your RPC definitions here.
 
