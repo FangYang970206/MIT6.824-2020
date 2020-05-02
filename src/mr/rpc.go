@@ -32,6 +32,7 @@ type WorkerTask struct {
 	MapID          int
 	ReduceID       int
 	ReduceNum      int
+	MapNum         int
 	State          TaskState
 	FileName       string
 	MapFunction    func(string, string) []KeyValue

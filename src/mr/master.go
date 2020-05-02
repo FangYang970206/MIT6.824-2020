@@ -1,8 +1,8 @@
 package mr
 
 import (
-	"io/ioutil"
 	"log"
+	"time"
 )
 import "net"
 import "os"
@@ -13,6 +13,7 @@ import "sync"
 type Flag struct {
 	processing bool
 	finished   bool
+	startTime  time.Time
 }
 
 type Master struct {
@@ -25,12 +26,40 @@ type Master struct {
 	MapNum        int
 	ReduceNum     int
 	Mut           sync.Mutex
-	Taskchans     chan WorkerTask
+	//Taskchans     chan WorkerTask
 }
 
 //func (m *Master) mapResult(arg *mapResultArgs, reply *mapResultReply) error {
 //	return nil
 //}
+
+func (m *Master) HandlerTimeOut() {
+	for !m.MapAllDone || !m.ReduceALLDone {
+		m.Mut.Lock()
+		if !m.MapAllDone {
+			for idx := 0; idx < m.MapNum; idx++ {
+				if m.MapFlags[idx].processing == true {
+					timeNow := time.Now()
+					if timeNow.Sub(m.MapFlags[idx].startTime) > time.Second*5 {
+						m.MapFlags[idx].processing = false
+					}
+				}
+			}
+		}
+		if !m.ReduceALLDone {
+			for idx := 0; idx < m.MapNum; idx++ {
+				if m.ReduceFlags[idx].processing == true {
+					timeNow := time.Now()
+					if timeNow.Sub(m.ReduceFlags[idx].startTime) > time.Second*5 {
+						m.ReduceFlags[idx].processing = false
+					}
+				}
+			}
+		}
+		m.Mut.Unlock()
+		time.Sleep(30 * time.Millisecond)
+	}
+}
 
 func (m *Master) CreateWorkerTask(args *CreateWorkerArgs, workerTask *WorkerTask) error {
 	m.Mut.Lock()
@@ -39,10 +68,12 @@ func (m *Master) CreateWorkerTask(args *CreateWorkerArgs, workerTask *WorkerTask
 		for idx := 0; idx < m.MapNum; idx += 1 {
 			if !m.MapFlags[idx].processing && !m.MapFlags[idx].finished {
 				workerTask.ReduceNum = m.ReduceNum
+				workerTask.MapNum = m.MapNum
 				workerTask.State = MapState
 				workerTask.MapID = idx
 				workerTask.FileName = m.FileNames[idx]
 				m.MapFlags[idx].processing = true
+				m.MapFlags[idx].startTime = time.Now()
 				return nil
 			}
 		}
@@ -55,6 +86,7 @@ func (m *Master) CreateWorkerTask(args *CreateWorkerArgs, workerTask *WorkerTask
 				workerTask.State = ReduceState
 				workerTask.ReduceID = idx
 				m.ReduceFlags[idx].processing = true
+				m.ReduceFlags[idx].startTime = time.Now()
 				return nil
 			}
 		}
@@ -70,9 +102,42 @@ func (m *Master) HandlerWorkerReport(wr *WorkerReportArgs, task *WorkerReportRep
 	defer m.Mut.Unlock()
 	if wr.IsSuccess {
 		if wr.State == MapState {
-
+			m.MapFlags[wr.MapID].finished = true
+			m.MapFlags[wr.MapID].processing = false
+		} else {
+			m.ReduceFlags[wr.ReduceID].finished = true
+			m.ReduceFlags[wr.ReduceID].processing = false
+		}
+	} else {
+		if wr.State == MapState {
+			if m.MapFlags[wr.MapID].finished == false {
+				m.MapFlags[wr.MapID].processing = false
+			}
+		} else {
+			if m.ReduceFlags[wr.ReduceID].finished == false {
+				m.ReduceFlags[wr.ReduceID].processing = false
+			}
 		}
 	}
+	for id := 0; id < m.MapNum; id++ {
+		if !m.MapFlags[id].finished {
+			break
+		} else {
+			if id == m.MapNum-1 {
+				m.MapAllDone = true
+			}
+		}
+	}
+	for id := 0; id < m.ReduceNum; id++ {
+		if !m.ReduceFlags[id].finished {
+			break
+		} else {
+			if id == m.ReduceNum-1 {
+				m.ReduceALLDone = true
+			}
+		}
+	}
+	return nil
 }
 
 // Your code here -- RPC handlers for the worker to call.
@@ -139,12 +204,13 @@ func MakeMaster(files []string, nReduce int) *Master {
 		MapAllDone:    false,
 		ReduceALLDone: false,
 	}
-	if nReduce > len(files) {
-		m.Taskchans = make(chan WorkerTask, nReduce)
-	} else {
-		m.Taskchans = make(chan WorkerTask, len(files))
-	}
+	//if nReduce > len(files) {
+	//	m.Taskchans = make(chan WorkerTask, nReduce)
+	//} else {
+	//	m.Taskchans = make(chan WorkerTask, len(files))
+	//}
 	// Your code here.
+	go m.HandlerTimeOut()
 	m.server()
 	return &m
 }

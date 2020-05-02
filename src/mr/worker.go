@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io/ioutil"
 	"os"
+	"strings"
 	"time"
 )
 import "log"
@@ -88,7 +89,43 @@ func (wt *WorkerTask) DoMapWork() {
 }
 
 func (wt *WorkerTask) DoReduceWork() {
-
+	kvsReduce := make(map[string][]string)
+	for idx := 0; idx < wt.MapNum; idx++ {
+		filename := fmt.Sprintf("mr-%d-%d", idx, wt.ReduceID)
+		file, err := os.Open(filename)
+		if err != nil {
+			wt.ReportWorkerTask(err)
+			log.Fatalf("open file %v fail", filename)
+			return
+		}
+		content, _ := ioutil.ReadAll(file)
+		kvs := make([]KeyValue, 0)
+		err = json.Unmarshal(content, &kvs)
+		if err != nil {
+			wt.ReportWorkerTask(err)
+			log.Fatalf("json file %v fail", filename)
+			return
+		}
+		for _, kv := range kvs {
+			_, ok := kvsReduce[kv.Key]
+			if !ok {
+				kvsReduce[kv.Key] = make([]string, 0)
+			}
+			kvsReduce[kv.Key] = append(kvsReduce[kv.Key], kv.Value)
+		}
+	}
+	ReduceResult := make([]string, 0)
+	for key, val := range kvsReduce {
+		ReduceResult = append(ReduceResult, fmt.Sprintf("%v %v\n", key, wt.ReduceFunction(key, val)))
+	}
+	outFileName := fmt.Sprintf("mr-out-%d", wt.ReduceID)
+	err := ioutil.WriteFile(outFileName, []byte(strings.Join(ReduceResult, "")), 0644)
+	if err != nil {
+		wt.ReportWorkerTask(err)
+		log.Fatalf("write %v fail:", outFileName)
+		return
+	}
+	wt.ReportWorkerTask(nil)
 }
 
 //
@@ -96,8 +133,10 @@ func (wt *WorkerTask) DoReduceWork() {
 //
 func Worker(mapf func(string, string) []KeyValue,
 	reducef func(string, []string) string) {
-	wt := WorkerTask{MapFunction: mapf,
-		ReduceFunction: reducef}
+	wt := WorkerTask{
+		MapFunction:    mapf,
+		ReduceFunction: reducef,
+	}
 	for {
 		wt.GetWorkerTask()
 		if wt.State == MapState {
@@ -107,7 +146,7 @@ func Worker(mapf func(string, string) []KeyValue,
 		} else if wt.State == StopState {
 			break
 		} else if wt.State == WaitState {
-			time.Sleep(10 * time.Millisecond)
+			time.Sleep(5 * time.Millisecond)
 		}
 	}
 	return
