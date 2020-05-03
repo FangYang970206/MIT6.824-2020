@@ -31,7 +31,7 @@ func ihash(key string) int {
 }
 
 func (wt *WorkerTask) GetWorkerTask() {
-	cwa := CreateWorkerArgs{}
+	cwa := NoArgs{}
 	newWt := WorkerTask{}
 	call("Master.CreateWorkerTask", &cwa, &newWt)
 	if newWt.State == MapState {
@@ -52,9 +52,6 @@ func (wt *WorkerTask) GetWorkerTask() {
 	} else {
 		wt.State = newWt.State
 	}
-	// fmt.Printf("New Worker State: %d\n", newWt.State)
-	// call("Master.CreateWorkerTask", &cwa, wt)
-	// fmt.Printf("Worker State: %d\n", wt.State)
 }
 
 func (wt *WorkerTask) ReportWorkerTask(err error) {
@@ -69,15 +66,14 @@ func (wt *WorkerTask) ReportWorkerTask(err error) {
 	} else {
 		wra.ReduceTaskCnt = wt.ReduceTaskCnt
 	}
-	wrr := WorkerReportReply{}
+	wrr := NoReply{}
 	if err != nil {
 		wra.IsSuccess = false
 	}
-	call("Master.HandlerWorkerReport", &wra, &wrr)
+	call("Master.HandleWorkerReport", &wra, &wrr)
 }
 
 func (wt *WorkerTask) DoMapWork() {
-	fmt.Println("enter DoMapWork")
 	file, err := os.Open(wt.FileName)
 	if err != nil {
 		wt.ReportWorkerTask(err)
@@ -91,11 +87,7 @@ func (wt *WorkerTask) DoMapWork() {
 		return
 	}
 	file.Close()
-	fmt.Printf("MapId : %d , read file ok\n", wt.MapID)
 	kvs := wt.MapFunction(wt.FileName, string(content))
-	fmt.Printf("MapId : %d , function run ok\n", wt.MapID)
-	fmt.Println("Map res: ")
-	fmt.Println(kvs)
 	intermediate := make([][]KeyValue, wt.ReduceNum, wt.ReduceNum)
 	for _, kv := range kvs {
 		idx := ihash(kv.Key) % wt.ReduceNum
@@ -138,8 +130,7 @@ func (wt *WorkerTask) DoReduceWork() {
 			return
 		}
 		file.Close()
-		fmt.Printf("filename: %v content: %s\n", filename, content)
-		kvs := make([]KeyValue, 0, 100)
+		kvs := make([]KeyValue, 0)
 		err = json.Unmarshal(content, &kvs)
 		if err != nil {
 			wt.ReportWorkerTask(err)
@@ -149,18 +140,15 @@ func (wt *WorkerTask) DoReduceWork() {
 		for _, kv := range kvs {
 			_, ok := kvsReduce[kv.Key]
 			if !ok {
-				kvsReduce[kv.Key] = make([]string, 0, 100)
+				kvsReduce[kv.Key] = make([]string, 0)
 			}
 			kvsReduce[kv.Key] = append(kvsReduce[kv.Key], kv.Value)
 		}
 	}
-	// fmt.Printf("kvsReduce %d res: \n", wt.ReduceID)
-	fmt.Printf("kvsRduce %d value: \n%v\n", wt.ReduceID, kvsReduce)
-	ReduceResult := make([]string, 0, 100)
+	ReduceResult := make([]string, 0)
 	for key, val := range kvsReduce {
 		ReduceResult = append(ReduceResult, fmt.Sprintf("%v %v\n", key, wt.ReduceFunction(key, val)))
 	}
-	fmt.Printf("ReduceId : %d , function run ok\n", wt.ReduceID)
 	outFileName := fmt.Sprintf("mr-out-%d", wt.ReduceID)
 	err := ioutil.WriteFile(outFileName, []byte(strings.Join(ReduceResult, "")), 0644)
 	if err != nil {
@@ -182,7 +170,6 @@ func Worker(mapf func(string, string) []KeyValue,
 	}
 	for {
 		wt.GetWorkerTask()
-		fmt.Printf("Worker State: %d\n", wt.State)
 		if wt.State == MapState {
 			wt.DoMapWork()
 		} else if wt.State == ReduceState {
@@ -194,32 +181,7 @@ func Worker(mapf func(string, string) []KeyValue,
 		}
 	}
 	return
-	// uncomment to send the Example RPC to the master.
-	//CallExample()
 }
-
-//
-// example function to show how to make an RPC call to the master.
-//
-// the RPC argument and reply types are defined in rpc.go.
-//
-//func CallExample() {
-//
-//	// declare an argument structure.
-//	args := ExampleArgs{}
-//
-//	// fill in the argument(s).
-//	args.X = 99
-//
-//	// declare a reply structure.
-//	reply := ExampleReply{}
-//
-//	// send the RPC request, wait for the reply.
-//	call("Master.Example", &args, &reply)
-//
-//	// reply.Y should be 100.
-//	fmt.Printf("reply.Y %v\n", reply.Y)
-//}
 
 //
 // send an RPC request to the master, wait for the response.
@@ -239,7 +201,5 @@ func call(rpcname string, args interface{}, reply interface{}) bool {
 	if err == nil {
 		return true
 	}
-
-	fmt.Println(err)
 	return false
 }
