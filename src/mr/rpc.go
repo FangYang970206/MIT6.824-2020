@@ -6,8 +6,10 @@ package mr
 // remember to capitalize all names.
 //
 
-import "os"
-import "strconv"
+import (
+	"os"
+	"strconv"
+)
 
 //
 // example to show how to declare the arguments
@@ -33,6 +35,8 @@ type WorkerTask struct {
 	ReduceID       int
 	ReduceNum      int
 	MapNum         int
+	MapTaskCnt     int
+	ReduceTaskCnt  int
 	State          TaskState
 	FileName       string
 	MapFunction    func(string, string) []KeyValue
@@ -40,10 +44,12 @@ type WorkerTask struct {
 }
 
 type WorkerReportArgs struct {
-	MapID     int
-	ReduceID  int
-	State     TaskState
-	IsSuccess bool
+	MapID         int
+	ReduceID      int
+	State         TaskState
+	IsSuccess     bool
+	MapTaskCnt    int
+	ReduceTaskCnt int
 }
 
 type WorkerReportReply struct {

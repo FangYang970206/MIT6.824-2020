@@ -1,16 +1,16 @@
 package mr
 
 import (
+	"encoding/json"
 	"fmt"
+	"hash/fnv"
 	"io/ioutil"
+	"log"
+	"net/rpc"
 	"os"
 	"strings"
 	"time"
 )
-import "log"
-import "net/rpc"
-import "hash/fnv"
-import "encoding/json"
 
 //
 // Map functions return a slice of KeyValue.
@@ -32,7 +32,29 @@ func ihash(key string) int {
 
 func (wt *WorkerTask) GetWorkerTask() {
 	cwa := CreateWorkerArgs{}
-	call("Master.CreateWorkerTask", &cwa, wt)
+	newWt := WorkerTask{}
+	call("Master.CreateWorkerTask", &cwa, &newWt)
+	if newWt.State == MapState {
+		wt.ReduceNum = newWt.ReduceNum
+		wt.MapNum = newWt.MapNum
+		wt.State = newWt.State
+		wt.MapID = newWt.MapID
+		wt.FileName = newWt.FileName
+		wt.MapTaskCnt = newWt.MapTaskCnt
+	} else if newWt.State == ReduceState {
+		wt.State = newWt.State
+		wt.ReduceID = newWt.ReduceID
+		wt.ReduceTaskCnt = newWt.ReduceTaskCnt
+		wt.MapNum = newWt.MapNum
+		wt.ReduceNum = newWt.ReduceNum
+	} else if newWt.State == StopState {
+		wt.State = newWt.State
+	} else {
+		wt.State = newWt.State
+	}
+	// fmt.Printf("New Worker State: %d\n", newWt.State)
+	// call("Master.CreateWorkerTask", &cwa, wt)
+	// fmt.Printf("Worker State: %d\n", wt.State)
 }
 
 func (wt *WorkerTask) ReportWorkerTask(err error) {
@@ -42,6 +64,11 @@ func (wt *WorkerTask) ReportWorkerTask(err error) {
 		State:     wt.State,
 		IsSuccess: true,
 	}
+	if wt.State == MapState {
+		wra.MapTaskCnt = wt.MapTaskCnt
+	} else {
+		wra.ReduceTaskCnt = wt.ReduceTaskCnt
+	}
 	wrr := WorkerReportReply{}
 	if err != nil {
 		wra.IsSuccess = false
@@ -50,20 +77,25 @@ func (wt *WorkerTask) ReportWorkerTask(err error) {
 }
 
 func (wt *WorkerTask) DoMapWork() {
+	fmt.Println("enter DoMapWork")
 	file, err := os.Open(wt.FileName)
 	if err != nil {
 		wt.ReportWorkerTask(err)
-		log.Fatalf("cannot open %v", wt.FileName)
+		fmt.Printf("cannot open %v", wt.FileName)
 		return
 	}
 	content, err := ioutil.ReadAll(file)
 	if err != nil {
 		wt.ReportWorkerTask(err)
-		log.Fatalf("cannot read %v", wt.FileName)
+		fmt.Printf("cannot read %v", wt.FileName)
 		return
 	}
 	file.Close()
+	fmt.Printf("MapId : %d , read file ok\n", wt.MapID)
 	kvs := wt.MapFunction(wt.FileName, string(content))
+	fmt.Printf("MapId : %d , function run ok\n", wt.MapID)
+	fmt.Println("Map res: ")
+	fmt.Println(kvs)
 	intermediate := make([][]KeyValue, wt.ReduceNum, wt.ReduceNum)
 	for _, kv := range kvs {
 		idx := ihash(kv.Key) % wt.ReduceNum
@@ -74,16 +106,17 @@ func (wt *WorkerTask) DoMapWork() {
 		file, err = os.Create(intermediateFileName)
 		if err != nil {
 			wt.ReportWorkerTask(err)
-			log.Fatalf("cannot create %v", intermediateFileName)
+			fmt.Printf("cannot create %v", intermediateFileName)
 			return
 		}
 		data, _ := json.Marshal(intermediate[idx])
 		_, err = file.Write(data)
 		if err != nil {
 			wt.ReportWorkerTask(err)
-			log.Fatalf("connot write file: %v", intermediateFileName)
+			fmt.Printf("connot write file: %v", intermediateFileName)
 			return
 		}
+		file.Close()
 	}
 	wt.ReportWorkerTask(nil)
 }
@@ -95,34 +128,44 @@ func (wt *WorkerTask) DoReduceWork() {
 		file, err := os.Open(filename)
 		if err != nil {
 			wt.ReportWorkerTask(err)
-			log.Fatalf("open file %v fail", filename)
+			fmt.Printf("open file %v fail", filename)
 			return
 		}
-		content, _ := ioutil.ReadAll(file)
-		kvs := make([]KeyValue, 0)
+		content, err := ioutil.ReadAll(file)
+		if err != nil {
+			wt.ReportWorkerTask(err)
+			fmt.Printf("read file %v fail", filename)
+			return
+		}
+		file.Close()
+		fmt.Printf("filename: %v content: %s\n", filename, content)
+		kvs := make([]KeyValue, 0, 100)
 		err = json.Unmarshal(content, &kvs)
 		if err != nil {
 			wt.ReportWorkerTask(err)
-			log.Fatalf("json file %v fail", filename)
+			fmt.Printf("json file %v fail", filename)
 			return
 		}
 		for _, kv := range kvs {
 			_, ok := kvsReduce[kv.Key]
 			if !ok {
-				kvsReduce[kv.Key] = make([]string, 0)
+				kvsReduce[kv.Key] = make([]string, 0, 100)
 			}
 			kvsReduce[kv.Key] = append(kvsReduce[kv.Key], kv.Value)
 		}
 	}
-	ReduceResult := make([]string, 0)
+	// fmt.Printf("kvsReduce %d res: \n", wt.ReduceID)
+	fmt.Printf("kvsRduce %d value: \n%v\n", wt.ReduceID, kvsReduce)
+	ReduceResult := make([]string, 0, 100)
 	for key, val := range kvsReduce {
 		ReduceResult = append(ReduceResult, fmt.Sprintf("%v %v\n", key, wt.ReduceFunction(key, val)))
 	}
+	fmt.Printf("ReduceId : %d , function run ok\n", wt.ReduceID)
 	outFileName := fmt.Sprintf("mr-out-%d", wt.ReduceID)
 	err := ioutil.WriteFile(outFileName, []byte(strings.Join(ReduceResult, "")), 0644)
 	if err != nil {
 		wt.ReportWorkerTask(err)
-		log.Fatalf("write %v fail:", outFileName)
+		fmt.Printf("write %v fail:", outFileName)
 		return
 	}
 	wt.ReportWorkerTask(nil)
@@ -139,6 +182,7 @@ func Worker(mapf func(string, string) []KeyValue,
 	}
 	for {
 		wt.GetWorkerTask()
+		fmt.Printf("Worker State: %d\n", wt.State)
 		if wt.State == MapState {
 			wt.DoMapWork()
 		} else if wt.State == ReduceState {
@@ -146,7 +190,7 @@ func Worker(mapf func(string, string) []KeyValue,
 		} else if wt.State == StopState {
 			break
 		} else if wt.State == WaitState {
-			time.Sleep(5 * time.Millisecond)
+			time.Sleep(300 * time.Millisecond)
 		}
 	}
 	return
